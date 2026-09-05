@@ -153,6 +153,7 @@
           "10.11.5" = "sha256-SgsOEDRGMU2uEO9+i2jouxJCqnejqDx9zSMep6rwXOQ=";
           "10.11.6" = "sha256-0g9qN5GV5g7tY/5Qew5VjpIopPgfvwuu5z4vXYz8Q1A=";
           "10.11.10" = "sha256-3FfqhqQfuQdM/02NyhAWDW7H6OaTynWtaUBoSIxk4AQ=";
+          "10.11.11" = "sha256-4p/DaeyuVGdsrrUMu8AGtcTulZkGwA8eAvb4PbnCJ/s=";
         })."${jellyfin.version}";
     };
     openapi-config = writeTextFile {

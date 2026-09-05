@@ -9,12 +9,14 @@ with lib; let
   globals = config.util-nixarr.globals;
 in {
   imports = [
+    ./anchorr
     ./audiobookshelf
     ./autobrr
     ./bazarr
     ./ddns
     ./jellyfin
     ./jellyseerr
+    ./seerr
     ./lib
     ./komga
     ./lidarr
@@ -24,8 +26,7 @@ in {
     ./prowlarr
     ./qbittorrent
     ./radarr
-    ./readarr
-    ./readarr-audiobook
+    ./shelfmark
     ./recyclarr
     ./sabnzbd
     ./sonarr
@@ -61,18 +62,18 @@ in {
 
         The following services are supported:
 
+        - [Anchorr](#nixarr.anchorr.enable)
         - [Audiobookshelf](#nixarr.audiobookshelf.enable)
         - [Autobrr](#nixarr.autobrr.enable)
         - [Bazarr](#nixarr.bazarr.enable)
         - [Jellyfin](#nixarr.jellyfin.enable)
-        - [Jellyseerr](#nixarr.jellyseerr.enable)
+        - [Seerr](#nixarr.seerr.enable)
         - [Lidarr](#nixarr.lidarr.enable)
         - [Plex](#nixarr.plex.enable)
         - [Prowlarr](#nixarr.prowlarr.enable)
         - [qBittorrent](#nixarr.qbittorrent.enable)
         - [Radarr](#nixarr.radarr.enable)
-        - [Readarr](#nixarr.readarr.enable)
-        - [Readarr Audiobook](#nixarr.readarr-audiobook.enable)
+        - [Shelfmark](#nixarr.shelfmark.enable)
         - [Recyclarr](#nixarr.recyclarr.enable)
         - [SABnzbd](#nixarr.sabnzbd.enable)
         - [Sonarr](#nixarr.sonarr.enable)
@@ -224,9 +225,10 @@ in {
         description = ''
           Whether to allow direct LAN access to VPN-confined services. When
           enabled (default), services are accessible from the local network
-          (192.168.0.0/24 and 192.168.1.0/24). When disabled, services are
-          only accessible from localhost (127.0.0.1), which is useful when
-          using a reverse proxy like Caddy for all external access.
+          (all RFC 1918 private ranges: 10.0.0.0/8, 172.16.0.0/12,
+          192.168.0.0/16). When disabled, services are only accessible from
+          localhost (127.0.0.1), which is useful when using a reverse proxy
+          like Caddy for all external access.
 
           This is controlled by the VPN namespace firewall rules via the
           accessibleFrom configuration.
@@ -249,7 +251,7 @@ in {
     users.groups.media.members = cfg.mediaUsers;
 
     systemd.tmpfiles.rules = [
-      "d '${cfg.mediaDir}'  0775 ${globals.libraryOwner.user} ${globals.libraryOwner.group} - -"
+      "d '${cfg.mediaDir}'  2775 ${globals.libraryOwner.user} ${globals.libraryOwner.group} - -"
     ];
 
     environment.systemPackages = with pkgs; [
@@ -266,8 +268,9 @@ in {
         (
           if cfg.vpn.exposeOnLAN
           then [
-            "192.168.1.0/24"
-            "192.168.0.0/24"
+            "10.0.0.0/8"
+            "172.16.0.0/12"
+            "192.168.0.0/16"
             "127.0.0.1"
           ]
           else ["127.0.0.1"]
@@ -301,10 +304,13 @@ in {
               echo "/etc/resolv.conf contains:"
               cat /etc/resolv.conf
 
-              # Query resolvconf
-              echo "resolvconf output:"
-              resolvconf -l
-              echo ""
+              # Check if resolvconf is available
+              if command -v resolvconf >/dev/null 2>&1; then
+                # Query resolvconf
+                echo "resolvconf output:"
+                resolvconf -l
+                echo ""
+              fi
 
               # Get ip
               echo "Getting IP:"

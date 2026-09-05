@@ -23,7 +23,7 @@ with lib; let
 
   # Generate qBittorrent configuration
   qbittorrentConfig =
-    {
+    lib.recursiveUpdate {
       BitTorrent = {
         # Download paths
         "Session\\DefaultSavePath" = downloadDir;
@@ -45,8 +45,8 @@ with lib; let
         "Session\\MaxActiveDownloads" = 5;
         "Session\\MaxActiveTorrents" = 10;
         "Session\\MaxActiveUploads" = 10;
-        "Session\\QueueingSystemEnabled" = true;
-        "Session\\IgnoreSlowTorrentsForQueueing" = true;
+        "Session\\QueueingSystemEnabled" = cfg.torrentQueueing.enable;
+        "Session\\IgnoreSlowTorrentsForQueueing" = cfg.torrentQueueing.enable;
 
         # Categories for *arr apps (paths relative to DefaultSavePath)
         "Session\\DisableAutoTMMByDefault" = false; # Enable automatic torrent management
@@ -84,7 +84,7 @@ with lib; let
         "Downloads\\PreAllocation" = true; # Pre-allocate disk space
       };
     }
-    // cfg.extraConfig;
+    cfg.extraConfig;
 in {
   options.nixarr.qbittorrent = {
     enable = mkOption {
@@ -210,6 +210,22 @@ in {
       };
     };
 
+    torrentQueueing = {
+      enable = mkOption {
+        type = types.bool;
+        default = true;
+        example = true;
+        description = ''
+          Enable qBittorrent's torrent queueing system.
+
+          When enabled (default), active downloads and uploads are limited by the
+          MaxActive* session settings in the generated configuration.
+          When disabled, all seeding torrents stay active. This is
+          preferred on private trackers, which need to see every seeded torrent.
+        '';
+      };
+    };
+
     peerPort = mkOption {
       type = types.port;
       default = 6881;
@@ -306,7 +322,7 @@ in {
         "d '${nixarr.mediaDir}/qbittorrent/lidarr'      0775 ${globals.qbittorrent.user} ${globals.qbittorrent.group} - -"
         "d '${nixarr.mediaDir}/qbittorrent/radarr'      0775 ${globals.qbittorrent.user} ${globals.qbittorrent.group} - -"
         "d '${nixarr.mediaDir}/qbittorrent/sonarr'      0775 ${globals.qbittorrent.user} ${globals.qbittorrent.group} - -"
-        "d '${nixarr.mediaDir}/qbittorrent/readarr'     0775 ${globals.qbittorrent.user} ${globals.qbittorrent.group} - -"
+        "d '${nixarr.mediaDir}/qbittorrent/shelfmark'   0775 ${globals.qbittorrent.user} ${globals.qbittorrent.group} - -"
       ];
 
     # Use NixOS qbittorrent service

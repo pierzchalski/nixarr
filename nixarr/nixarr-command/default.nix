@@ -97,6 +97,10 @@ with lib; let
         chown -R ${globals.audiobookshelf.user}:root "${nixarr.audiobookshelf.stateDir}"
         find "${nixarr.audiobookshelf.stateDir}" \( -type d -exec chmod 0700 {} + -true \) -o \( -exec chmod 0600 {} + \)
       ''}
+        ${strings.optionalString nixarr.anchorr.enable ''
+        chown -R ${globals.anchorr.user}:root "${nixarr.anchorr.stateDir}"
+        find "${nixarr.anchorr.stateDir}" \( -type d -exec chmod 0700 {} + -true \) -o \( -exec chmod 0600 {} + \)
+      ''}
         ${strings.optionalString nixarr.transmission.enable ''
         chown -R ${globals.transmission.user}:${globals.transmission.group} "${nixarr.mediaDir}/torrents"
         chown -R ${globals.transmission.user}:${globals.cross-seed.group} "${nixarr.transmission.stateDir}"
@@ -136,17 +140,13 @@ with lib; let
         chown -R ${globals.bazarr.user}:root "${nixarr.bazarr.stateDir}"
         find "${nixarr.bazarr.stateDir}" \( -type d -exec chmod 0700 {} + -true \) -o \( -exec chmod 0600 {} + \)
       ''}
-        ${strings.optionalString nixarr.readarr.enable ''
-        chown -R ${globals.readarr.user}:root "${nixarr.readarr.stateDir}"
-        find "${nixarr.readarr.stateDir}" \( -type d -exec chmod 0700 {} + -true \) -o \( -exec chmod 0600 {} + \)
+        ${strings.optionalString nixarr.shelfmark.enable ''
+        chown -R ${globals.shelfmark.user}:root "${nixarr.shelfmark.stateDir}"
+        find "${nixarr.shelfmark.stateDir}" \( -type d -exec chmod 0700 {} + -true \) -o \( -exec chmod 0600 {} + \)
       ''}
-        ${strings.optionalString nixarr.readarr-audiobook.enable ''
-        chown -R ${globals.readarr-audiobook.user}:root "${nixarr.readarr-audiobook.stateDir}"
-        find "${nixarr.readarr-audiobook.stateDir}" \( -type d -exec chmod 0700 {} + -true \) -o \( -exec chmod 0600 {} + \)
-      ''}
-        ${strings.optionalString nixarr.jellyseerr.enable ''
-        chown -R ${globals.jellyseerr.user}:root "${nixarr.jellyseerr.stateDir}"
-        find "${nixarr.jellyseerr.stateDir}" \( -type d -exec chmod 0700 {} + -true \) -o \( -exec chmod 0600 {} + \)
+        ${strings.optionalString nixarr.seerr.enable ''
+        chown -R ${globals.seerr.user}:root "${nixarr.seerr.stateDir}"
+        find "${nixarr.seerr.stateDir}" \( -type d -exec chmod 0700 {} + -true \) -o \( -exec chmod 0600 {} + \)
       ''}
         ${strings.optionalString nixarr.autobrr.enable ''
         chown -R ${globals.autobrr.user}:root "${nixarr.autobrr.stateDir}"
@@ -183,9 +183,9 @@ with lib; let
         BAZARR=$(yq '.auth.apikey' "${nixarr.bazarr.stateDir}/config/config.yaml")
         echo "Bazarr api-key: $BAZARR"
       ''}
-        ${strings.optionalString nixarr.jellyseerr.enable ''
-        JELLYSEERR=$(yq '.main.apiKey' "${nixarr.jellyseerr.stateDir}/settings.json")
-        echo "Jellyseerr api-key: $JELLYSEERR"
+        ${strings.optionalString nixarr.seerr.enable ''
+        SEERR=$(yq '.main.apiKey' "${nixarr.seerr.stateDir}/settings.json")
+        echo "Seerr api-key: $SEERR"
       ''}
         ${strings.optionalString nixarr.lidarr.enable ''
         LIDARR=$(xq '.Config.ApiKey' "${nixarr.lidarr.stateDir}/config.xml")
@@ -198,14 +198,6 @@ with lib; let
         ${strings.optionalString nixarr.radarr.enable ''
         RADARR=$(xq '.Config.ApiKey' "${nixarr.radarr.stateDir}/config.xml")
         echo "Radarr api-key: $RADARR"
-      ''}
-        ${strings.optionalString nixarr.readarr.enable ''
-        READARR=$(xq '.Config.ApiKey' "${nixarr.readarr.stateDir}/config.xml")
-        echo "Readarr api-key: $READARR"
-      ''}
-        ${strings.optionalString nixarr.readarr-audiobook.enable ''
-        READARR_AUDIOBOOK=$(xq -r '.Config.ApiKey' "${nixarr.readarr-audiobook.stateDir}/config.xml")
-        echo "Readarr Audiobook api-key: $READARR_AUDIOBOOK"
       ''}
         ${strings.optionalString nixarr.sabnzbd.enable ''
         SABNZBD=$(grep api_key ${nixarr.sabnzbd.stateDir}/sabnzbd.ini | sed 's/^api_key.*= *//g')
@@ -241,8 +233,8 @@ with lib; let
 
         echo "Wiping all nixarr users and groups from /etc/passwd and /etc/group..."
 
-        sed -i -E '/^(audiobookshelf|autobrr|bazarr|cross-seed|jellyfin|jellyseerr|lidarr|plex|prowlarr|qbittorrent|radarr|readarr|recyclarr|sabnzbd|sonarr|streamer|torrenter|transmission|usenet|whisparr|komgarr)/d' /etc/passwd
-        sed -i -E '/^(autobrr|cross-seed|jellyseerr|media|prowlarr|recyclarr|sabnzbd|streamer|torrenter|transmission|usenet)/d' /etc/group
+        sed -i -E '/^(anchorr|audiobookshelf|autobrr|bazarr|cross-seed|jellyfin|jellyseerr|lidarr|plex|prowlarr|qbittorrent|radarr|readarr|recyclarr|sabnzbd|seerr|shelfmark|sonarr|streamer|torrenter|transmission|usenet|whisparr|komgarr)/d' /etc/passwd
+        sed -i -E '/^(anchorr|autobrr|cross-seed|jellyseerr|media|prowlarr|recyclarr|sabnzbd|seerr|streamer|torrenter|transmission|usenet)/d' /etc/group
 
         echo ""
         echo "Done, please rebuild your configuration to get back the users and groups. This time, they will have the correct permissions."

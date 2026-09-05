@@ -137,6 +137,18 @@ in {
       '';
     };
 
+    vpn.configureNginx = mkOption {
+      type = types.bool;
+      default = cfg.vpn.enable;
+      example = false;
+      description = ''
+        **Required options:** [`nixarr.transmission.vpn.enable`)(#nixarr.transmission.vpn.enable)
+
+        Configure nginx as a reverse proxy for the transmission web ui.
+      '';
+      defaultText = literalExpression "nixarr.transmission.vpn.enable";
+    };
+
     flood.enable = mkEnableOption "the flood web-UI for the transmission web-UI.";
 
     privateTrackers = {
@@ -296,6 +308,13 @@ in {
           nixarr.prowlarr.enable option to be set, but it was not.
         '';
       }
+      {
+        assertion = cfg.vpn.configureNginx -> cfg.vpn.enable;
+        message = ''
+          The nixarr.transmission.vpn.configureNginx option requires the
+          nixarr.transmission.vpn.enable option to be set, but it was not.
+        '';
+      }
     ];
 
     users = {
@@ -321,7 +340,7 @@ in {
       "d '${nixarr.mediaDir}/torrents/lidarr'      0755 ${globals.transmission.user} ${globals.transmission.group} - -"
       "d '${nixarr.mediaDir}/torrents/radarr'      0755 ${globals.transmission.user} ${globals.transmission.group} - -"
       "d '${nixarr.mediaDir}/torrents/sonarr'      0755 ${globals.transmission.user} ${globals.transmission.group} - -"
-      "d '${nixarr.mediaDir}/torrents/readarr'     0755 ${globals.transmission.user} ${globals.transmission.group} - -"
+      "d '${nixarr.mediaDir}/torrents/shelfmark'   0755 ${globals.transmission.user} ${globals.transmission.group} - -"
     ];
 
     util-nixarr.services.cross-seed = mkIf cfg-cross-seed.enable {
@@ -464,7 +483,7 @@ in {
       ];
     };
 
-    services.nginx = mkIf cfg.vpn.enable {
+    services.nginx = mkIf cfg.vpn.configureNginx {
       enable = true;
 
       recommendedTlsSettings = true;

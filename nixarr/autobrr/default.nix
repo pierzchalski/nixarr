@@ -73,6 +73,18 @@ in {
       '';
     };
 
+    vpn.configureNginx = mkOption {
+      type = types.bool;
+      default = cfg.vpn.enable;
+      example = false;
+      description = ''
+        **Required options:** [`nixarr.autobrr.vpn.enable`)(#nixarr.autobrr.vpn.enable)
+
+        Configure nginx as a reverse proxy for the Autobrr web ui.
+      '';
+      defaultText = literalExpression "nixarr.autobrr.vpn.enable";
+    };
+
     settings = lib.mkOption {
       type = lib.types.submodule {freeformType = configFormat.type;};
       default = {
@@ -129,6 +141,13 @@ in {
         message = ''
           The nixarr.autobrr.vpn.enable option requires the
           nixarr.vpn.enable option to be set, but it was not.
+        '';
+      }
+      {
+        assertion = cfg.vpn.configureNginx -> cfg.vpn.enable;
+        message = ''
+          The nixarr.autobrr.vpn.configureNginx option requires the
+          nixarr.autobrr.vpn.enable option to be set, but it was not.
         '';
       }
       {
@@ -192,9 +211,8 @@ in {
 
           # Create config with session secret
           SESSION_SECRET=$(cat "$SESSION_SECRET_FILE")
-          cp '${configTemplate}' "${cfg.stateDir}/config.toml"
+          ${pkgs.dasel}/bin/dasel query -i toml "{ $this..., sessionSecret: '$SESSION_SECRET' }" < '${configTemplate}' > "${cfg.stateDir}/config.toml"
           chmod 600 "${cfg.stateDir}/config.toml"
-          ${pkgs.dasel}/bin/dasel put -f "${cfg.stateDir}/config.toml" -v "$SESSION_SECRET" -o "${cfg.stateDir}/config.toml" "sessionSecret"
         '');
         ExecStart = lib.mkForce "${lib.getExe cfg.package} --config ${cfg.stateDir}";
         Restart = "on-failure";
@@ -223,7 +241,7 @@ in {
     };
 
     # Nginx proxy for VPN-confined service
-    services.nginx = mkIf cfg.vpn.enable {
+    services.nginx = mkIf cfg.vpn.configureNginx {
       enable = true;
       recommendedTlsSettings = true;
       recommendedOptimisation = true;

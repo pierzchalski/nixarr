@@ -15,12 +15,15 @@ pkgs.testers.nixosTest {
 
     networking.firewall.enable = false;
 
+    virtualisation.memorySize = 4096;
+    virtualisation.diskSize = 8192;
+
     nixarr = {
       enable = true;
 
       jellyfin.enable = true;
       plex.enable = true;
-      jellyseerr.enable = true;
+      seerr.enable = true;
       audiobookshelf.enable = true;
 
       transmission = {
@@ -36,13 +39,14 @@ pkgs.testers.nixosTest {
       bazarr.enable = true;
       sonarr.enable = true;
       radarr.enable = true;
-      readarr.enable = true;
-      readarr-audiobook.enable = true;
       sabnzbd.enable = true;
       lidarr.enable = true;
       prowlarr.enable = true;
       whisparr.enable = true;
       komga.enable = true;
+      anchorr.enable = true;
+
+      shelfmark.enable = lib.versionAtLeast lib.version "26.05";
 
       # recyclarr = {
       #   enable = true;
@@ -103,7 +107,7 @@ pkgs.testers.nixosTest {
 
     # Check that all services are operational
     machine.succeed("systemctl is-active jellyfin")
-    machine.succeed("systemctl is-active jellyseerr")
+    machine.succeed("systemctl is-active seerr")
     machine.succeed("systemctl is-active audiobookshelf")
     machine.succeed("systemctl is-active plex")
     machine.succeed("systemctl is-active transmission")
@@ -111,12 +115,13 @@ pkgs.testers.nixosTest {
     machine.succeed("systemctl is-active bazarr")
     machine.succeed("systemctl is-active sonarr")
     machine.succeed("systemctl is-active radarr")
-    machine.succeed("systemctl is-active readarr")
-    machine.succeed("systemctl is-active readarr-audiobook")
     machine.succeed("systemctl is-active sabnzbd")
     machine.succeed("systemctl is-active lidarr")
     machine.succeed("systemctl is-active prowlarr")
+    # machine.succeed("systemctl is-active anchorr")
     # machine.succeed("systemctl is-active recyclarr")
+
+    ${lib.optionalString (lib.versionAtLeast lib.version "26.05") "machine.succeed('systemctl is-active shelfmark')"}
 
     print("\n=== Nixarr Simple Test Completed ===")
   '';

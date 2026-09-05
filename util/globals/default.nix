@@ -23,16 +23,19 @@ in {
       plex = 193;
       jellyfin = 146;
       audiobookshelf = 156;
+      anchorr = 185;
       autobrr = 188;
       bazarr = 232;
       lidarr = 306;
       prowlarr = 293;
-      jellyseerr = 262;
+      jellyseerr = 262; # kept for migration; remove once seerr rename is established
+      seerr = 262;
       komga = 145;
       sonarr = 274;
       radarr = 275;
-      readarr = 250;
-      readarr-audiobook = 211;
+      # Removed 2026-04-20
+      # readarr-audiobook = 211;
+      shelfmark = 250;
       recyclarr = 269;
       sabnzbd = 38;
       transmission = 70;
@@ -44,10 +47,12 @@ in {
       stash = 69;
     };
     gids = {
+      anchorr = 185;
       autobrr = 188;
       # Removed 2025-10-29
       # cross-seed = 183;
-      jellyseerr = 250;
+      jellyseerr = 250; # kept for migration; remove once seerr rename is established
+      seerr = 250;
       media = 169;
       prowlarr = 287;
       recyclarr = 269;
@@ -57,6 +62,10 @@ in {
     audiobookshelf = {
       user = "audiobookshelf";
       group = globals.libraryOwner.group;
+    };
+    anchorr = {
+      user = "anchorr";
+      group = "anchorr";
     };
     autobrr = {
       user = "autobrr";
@@ -73,6 +82,10 @@ in {
     jellyseerr = {
       user = "jellyseerr";
       group = "jellyseerr";
+    };
+    seerr = {
+      user = "seerr";
+      group = "seerr";
     };
     komga = {
       user = "komga";
@@ -94,12 +107,8 @@ in {
       user = "radarr";
       group = globals.libraryOwner.group;
     };
-    readarr = {
-      user = "readarr";
-      group = globals.libraryOwner.group;
-    };
-    readarr-audiobook = {
-      user = "readarr-audiobook";
+    shelfmark = {
+      user = "shelfmark";
       group = globals.libraryOwner.group;
     };
     recyclarr = {

@@ -66,6 +66,18 @@ in {
         Route Sonarr traffic through the VPN.
       '';
     };
+
+    vpn.configureNginx = mkOption {
+      type = types.bool;
+      default = cfg.vpn.enable;
+      example = false;
+      description = ''
+        **Required options:** [`nixarr.sonarr.vpn.enable`)(#nixarr.sonarr.vpn.enable)
+
+        Configure nginx as a reverse proxy for the Sonarr web ui.
+      '';
+      defaultText = literalExpression "nixarr.sonarr.vpn.enable";
+    };
   };
 
   config = mkIf (nixarr.enable && cfg.enable) {
@@ -75,6 +87,13 @@ in {
         message = ''
           The nixarr.sonarr.vpn.enable option requires the
           nixarr.vpn.enable option to be set, but it was not.
+        '';
+      }
+      {
+        assertion = cfg.vpn.configureNginx -> cfg.vpn.enable;
+        message = ''
+          The nixarr.sonarr.vpn.configureNginx option requires the
+          nixarr.sonarr.vpn.enable option to be set, but it was not.
         '';
       }
     ];
@@ -89,8 +108,9 @@ in {
     };
 
     systemd.tmpfiles.rules = [
-      "d '${nixarr.mediaDir}/library'        0775 ${globals.libraryOwner.user} ${globals.libraryOwner.group} - -"
-      "d '${nixarr.mediaDir}/library/shows'  0775 ${globals.libraryOwner.user} ${globals.libraryOwner.group} - -"
+      "d '${cfg.stateDir}' 0700 ${globals.sonarr.user} root - -"
+      "d '${nixarr.mediaDir}/library'        2775 ${globals.libraryOwner.user} ${globals.libraryOwner.group} - -"
+      "d '${nixarr.mediaDir}/library/shows'  2775 ${globals.libraryOwner.user} ${globals.libraryOwner.group} - -"
     ];
 
     services.sonarr = {
@@ -105,7 +125,7 @@ in {
 
     # Set UMask to 0002 so directories are created with group write permission (775)
     # This allows other services in the media group (like Jellyfin) to modify files
-    systemd.services.sonarr.serviceConfig.UMask = "0002";
+    systemd.services.sonarr.serviceConfig.UMask = lib.mkForce "0002";
 
     # Enable and specify VPN namespace to confine service in.
     systemd.services.sonarr.vpnConfinement = mkIf cfg.vpn.enable {
@@ -123,7 +143,7 @@ in {
       ];
     };
 
-    services.nginx = mkIf cfg.vpn.enable {
+    services.nginx = mkIf cfg.vpn.configureNginx {
       enable = true;
 
       recommendedTlsSettings = true;

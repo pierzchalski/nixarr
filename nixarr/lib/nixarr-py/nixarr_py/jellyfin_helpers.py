@@ -7,6 +7,21 @@ import uuid
 from nixarr_py.config import get_jellyfin_config
 
 
+# Jellyfin 12 moved the AuthenticateByName and API key endpoints from the "User"
+# and "ApiKey" OpenAPI tags to a new "Authentication" tag, so the client
+# generated from its spec has them on `AuthenticationApi` instead.
+def _user_authentication_api(client: jellyfin.ApiClient):
+    if hasattr(jellyfin, "AuthenticationApi"):
+        return jellyfin.AuthenticationApi(client)
+    return jellyfin.UserApi(client)
+
+
+def _api_key_api(client: jellyfin.ApiClient):
+    if hasattr(jellyfin, "AuthenticationApi"):
+        return jellyfin.AuthenticationApi(client)
+    return jellyfin.ApiKeyApi(client)
+
+
 def unauthenticated_client() -> jellyfin.ApiClient:
     """Create an unauthenticated Jellyfin API client configured for use with Nixarr.
 
@@ -44,7 +59,7 @@ def admin_user_client() -> jellyfin.ApiClient:
         device_uuid = f.read().strip()
     uuid.UUID(device_uuid)  # Validate it's a proper UUID
     auth_header = f'MediaBrowser Client="nixarr-py", Device="nixarr-py", DeviceId="{device_uuid}", Version="1"'
-    auth = jellyfin.UserApi(client).authenticate_user_by_name(
+    auth = _user_authentication_api(client).authenticate_user_by_name(
         jellyfin.AuthenticateUserByName(
             username=cfg.admin_username,
             pw=password,
@@ -92,7 +107,7 @@ def ensure_api_key_and_file() -> None:
     """
     cfg = get_jellyfin_config()
     client = admin_user_client()
-    api_keys = jellyfin.ApiKeyApi(client).get_keys()
+    api_keys = _api_key_api(client).get_keys()
     existing_api_key: str | None = None
     if cfg.api_key_file.is_file():
         with open(cfg.api_key_file, "r", encoding="utf-8") as f:
@@ -107,8 +122,8 @@ def ensure_api_key_and_file() -> None:
                     return
 
     # No existing API key found; create a new one
-    jellyfin.ApiKeyApi(client).create_key("nixarr-py")
-    api_keys = jellyfin.ApiKeyApi(client).get_keys()
+    _api_key_api(client).create_key("nixarr-py")
+    api_keys = _api_key_api(client).get_keys()
     assert api_keys.items is not None
     for item in api_keys.items:
         if item.app_name == "nixarr-py" and item.access_token is not None:

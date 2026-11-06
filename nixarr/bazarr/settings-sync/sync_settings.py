@@ -1,12 +1,15 @@
-from typing import Any
+from typing import Any, Literal
 import argparse
 import json
 import logging
 import pathlib
-import urllib.request
 import urllib.error
+import urllib.parse
+import urllib.request
 
 import pydantic
+
+from nixarr_py.utils import expand_secret
 
 
 logging.basicConfig(level=logging.INFO)
@@ -36,120 +39,281 @@ class RadarrConfig(pydantic.BaseModel):
     model_config = pydantic.ConfigDict(extra="allow")
 
 
+class LanguageProfileItem(pydantic.BaseModel):
+    language: str
+    type: Literal["normal", "hi", "nonHi", "forced"] = "normal"
+    search: Literal["always", "audioMatches", "noAudioMatches"] = "always"
+
+    model_config = pydantic.ConfigDict(extra="forbid")
+
+    def to_bazarr(self, item_id: int) -> dict[str, Any]:
+        # Bazarr stores these flags as the strings "True"/"False" (and "Excluded"
+        # for hi), matching what its own profile editor submits.
+        hi = {"normal": "False", "hi": "True", "nonHi": "Excluded", "forced": "False"}[
+            self.type
+        ]
+        return {
+            "id": item_id,
+            "language": self.language,
+            "hi": hi,
+            "forced": "True" if self.type == "forced" else "False",
+            "audio_exclude": "True" if self.search == "noAudioMatches" else "False",
+            "audio_only_include": "True" if self.search == "audioMatches" else "False",
+        }
+
+
+class LanguageProfile(pydantic.BaseModel):
+    name: str
+    items: list[LanguageProfileItem]
+    mustContain: list[str] = []
+    mustNotContain: list[str] = []
+    originalFormat: bool | None = None
+    tag: str | None = None
+
+    model_config = pydantic.ConfigDict(extra="forbid")
+
+
+class DefaultProfile(pydantic.BaseModel):
+    series: str | None = None
+    movies: str | None = None
+
+    model_config = pydantic.ConfigDict(extra="forbid")
+
+
+class WantedSearchFrequency(pydantic.BaseModel):
+    series: int | None = None
+    movies: int | None = None
+
+    model_config = pydantic.ConfigDict(extra="forbid")
+
+
 class SettingsSyncConfig(pydantic.BaseModel):
     bazarr_base_url: str
     bazarr_api_key_file: str
     sonarr: SonarrConfig | None = None
     radarr: RadarrConfig | None = None
+    languages: list[str] = []
+    language_profiles: list[LanguageProfile] = []
+    default_profile: DefaultProfile = DefaultProfile()
+    assign_default_profile_to_unassigned: bool = False
+    enabled_providers: list[str] | None = None
+    provider_settings: dict[str, dict[str, Any]] = {}
+    wanted_search_frequency: WantedSearchFrequency = WantedSearchFrequency()
 
     model_config = pydantic.ConfigDict(extra="forbid")
 
 
-def make_request(
-    base_url: str,
-    api_key: str,
-    endpoint: str,
-    method: str = "GET",
-    data: dict[str, Any] | None = None,
-) -> dict[str, Any]:
-    """Make a request to the Bazarr API."""
-    url = f"{base_url}/api{endpoint}"
-    headers = {
-        "X-API-KEY": api_key,
-        "Content-Type": "application/json",
-    }
+class BazarrApi:
+    def __init__(self, base_url: str, api_key: str) -> None:
+        self.base_url = base_url
+        self.api_key = api_key
 
-    request_data = json.dumps(data).encode("utf-8") if data else None
-    req = urllib.request.Request(url, data=request_data, headers=headers, method=method)
-
-    try:
-        with urllib.request.urlopen(req, timeout=30) as response:
-            response_data = response.read().decode("utf-8")
-            if response_data:
-                return json.loads(response_data)
-            return {}
-    except urllib.error.HTTPError as e:
-        error_body = e.read().decode("utf-8") if e.fp else ""
-        raise RuntimeError(f"HTTP {e.code} error for {url}: {error_body}") from e
-
-
-def get_current_settings(base_url: str, api_key: str) -> dict[str, Any]:
-    """Get current Bazarr settings."""
-    return make_request(base_url, api_key, "/system/settings")
+    def request(
+        self,
+        endpoint: str,
+        method: str = "GET",
+        form: list[tuple[str, str]] | None = None,
+    ) -> Any:
+        """Call the Bazarr API. Bazarr's write endpoints read form fields, not JSON."""
+        url = f"{self.base_url}/api{endpoint}"
+        headers = {"X-API-KEY": self.api_key}
+        data = None
+        if form is not None:
+            data = urllib.parse.urlencode(form).encode("utf-8")
+            headers["Content-Type"] = "application/x-www-form-urlencoded"
+        req = urllib.request.Request(url, data=data, headers=headers, method=method)
+        try:
+            with urllib.request.urlopen(req, timeout=60) as response:
+                body = response.read().decode("utf-8")
+                return json.loads(body) if body else None
+        except urllib.error.HTTPError as e:
+            error_body = e.read().decode("utf-8") if e.fp else ""
+            raise RuntimeError(
+                f"HTTP {e.code} from {method} {url}: {error_body}"
+            ) from e
 
 
-def save_settings(base_url: str, api_key: str, settings: dict[str, Any]) -> None:
-    """Save settings to Bazarr."""
-    make_request(base_url, api_key, "/system/settings", method="POST", data=settings)
+def form_value(value: Any) -> list[str]:
+    """Encode a setting value the way Bazarr's settings form does."""
+    value = expand_secret(value)
+    if isinstance(value, bool):
+        return ["true" if value else "false"]
+    if isinstance(value, list):
+        # Bazarr reads an array setting from repeated fields; a single empty
+        # field means an empty list.
+        return [str(v) for v in value] if value else [""]
+    return [str(value)]
 
 
-def sync_sonarr(
-    bazarr_base_url: str,
-    bazarr_api_key: str,
-    sonarr_config: SonarrConfig,
+def add_setting(
+    form: list[tuple[str, str]], section: str, key: str, value: Any
 ) -> None:
-    """Sync Sonarr settings to Bazarr."""
-    logger.info("Syncing Sonarr configuration to Bazarr")
-
-    # Read API key from file
-    apikey = ""
-    if sonarr_config.apiKeyFile:
-        with open(sonarr_config.apiKeyFile, "r", encoding="utf-8") as f:
-            apikey = f.read().strip()
-
-    settings = {
-        "settings-sonarr-ip": sonarr_config.ip,
-        "settings-sonarr-port": sonarr_config.port,
-        "settings-sonarr-base_url": sonarr_config.base_url,
-        "settings-sonarr-ssl": sonarr_config.ssl,
-        "settings-sonarr-apikey": apikey,
-        "settings-sonarr-only_monitored": sonarr_config.sync_only_monitored_series,
-        "settings-sonarr-series_sync": 60,
-        "settings-sonarr-episodes_sync": 60,
-    }
-
-    save_settings(bazarr_base_url, bazarr_api_key, settings)
-    logger.info("Sonarr configuration synced successfully")
+    for v in form_value(value):
+        form.append((f"settings-{section}-{key}", v))
 
 
-def sync_radarr(
-    bazarr_base_url: str,
-    bazarr_api_key: str,
-    radarr_config: RadarrConfig,
+def read_key(path: str) -> str:
+    with open(path, "r", encoding="utf-8") as f:
+        return f.read().strip()
+
+
+def build_profiles(
+    declared: list[LanguageProfile], existing: list[dict[str, Any]]
+) -> tuple[list[dict[str, Any]], dict[str, int]]:
+    """
+    Merge declared profiles into Bazarr's existing list.
+
+    Bazarr replaces its whole profile set with what is posted, so undeclared
+    profiles are posted back unchanged. A declared profile reuses the id of an
+    existing profile with the same name.
+    """
+    declared_names = {p.name for p in declared}
+    ids_by_name = {p["name"]: p["profileId"] for p in existing}
+    next_id = max([p["profileId"] for p in existing], default=0) + 1
+
+    merged = [p for p in existing if p["name"] not in declared_names]
+    for profile in declared:
+        if profile.name not in ids_by_name:
+            ids_by_name[profile.name] = next_id
+            next_id += 1
+        merged.append(
+            {
+                "profileId": ids_by_name[profile.name],
+                "name": profile.name,
+                "cutoff": None,
+                "items": [
+                    item.to_bazarr(i + 1) for i, item in enumerate(profile.items)
+                ],
+                "mustContain": profile.mustContain,
+                "mustNotContain": profile.mustNotContain,
+                "originalFormat": profile.originalFormat,
+                "tag": profile.tag,
+            }
+        )
+    return merged, ids_by_name
+
+
+def build_settings_form(
+    config: SettingsSyncConfig, api: BazarrApi
+) -> tuple[list[tuple[str, str]], dict[str, int]]:
+    form: list[tuple[str, str]] = []
+    ids_by_name: dict[str, int] = {}
+
+    for code in config.languages:
+        form.append(("languages-enabled", code))
+
+    if config.language_profiles:
+        existing = api.request("/system/languages/profiles") or []
+        profiles, ids_by_name = build_profiles(config.language_profiles, existing)
+        form.append(("languages-profiles", json.dumps(profiles)))
+
+    for kind, prefix in (("series", "serie"), ("movies", "movie")):
+        name = getattr(config.default_profile, kind)
+        if name is not None:
+            add_setting(form, "general", f"{prefix}_default_enabled", True)
+            add_setting(form, "general", f"{prefix}_default_profile", ids_by_name[name])
+
+    if config.enabled_providers is not None:
+        add_setting(form, "general", "enabled_providers", config.enabled_providers)
+
+    for provider, settings in config.provider_settings.items():
+        for key, value in settings.items():
+            add_setting(form, provider, key, value)
+
+    if config.wanted_search_frequency.series is not None:
+        add_setting(
+            form,
+            "general",
+            "wanted_search_frequency",
+            config.wanted_search_frequency.series,
+        )
+    if config.wanted_search_frequency.movies is not None:
+        add_setting(
+            form,
+            "general",
+            "wanted_search_frequency_movie",
+            config.wanted_search_frequency.movies,
+        )
+
+    # All of this goes in one request: Bazarr stores the profiles and default
+    # profile before it reconnects to Sonarr/Radarr, and that reconnect starts
+    # the first sync, which is the only time new items get the default profile.
+    if config.sonarr is not None:
+        sonarr = config.sonarr
+        add_setting(form, "general", "use_sonarr", True)
+        add_setting(form, "sonarr", "ip", sonarr.ip)
+        add_setting(form, "sonarr", "port", sonarr.port)
+        add_setting(form, "sonarr", "base_url", sonarr.base_url)
+        add_setting(form, "sonarr", "ssl", sonarr.ssl)
+        add_setting(
+            form,
+            "sonarr",
+            "apikey",
+            read_key(sonarr.apiKeyFile) if sonarr.apiKeyFile else "",
+        )
+        add_setting(form, "sonarr", "only_monitored", sonarr.sync_only_monitored_series)
+
+    if config.radarr is not None:
+        radarr = config.radarr
+        add_setting(form, "general", "use_radarr", True)
+        add_setting(form, "radarr", "ip", radarr.ip)
+        add_setting(form, "radarr", "port", radarr.port)
+        add_setting(form, "radarr", "base_url", radarr.base_url)
+        add_setting(form, "radarr", "ssl", radarr.ssl)
+        add_setting(
+            form,
+            "radarr",
+            "apikey",
+            read_key(radarr.apiKeyFile) if radarr.apiKeyFile else "",
+        )
+        add_setting(form, "radarr", "only_monitored", radarr.sync_only_monitored_movies)
+
+    return form, ids_by_name
+
+
+def assign_default_profile(
+    api: BazarrApi, endpoint: str, id_field: str, form_id_field: str, profile_id: int
 ) -> None:
-    """Sync Radarr settings to Bazarr."""
-    logger.info("Syncing Radarr configuration to Bazarr")
-
-    # Read API key from file
-    apikey = ""
-    if radarr_config.apiKeyFile:
-        with open(radarr_config.apiKeyFile, "r", encoding="utf-8") as f:
-            apikey = f.read().strip()
-
-    settings = {
-        "settings-radarr-ip": radarr_config.ip,
-        "settings-radarr-port": radarr_config.port,
-        "settings-radarr-base_url": radarr_config.base_url,
-        "settings-radarr-ssl": radarr_config.ssl,
-        "settings-radarr-apikey": apikey,
-        "settings-radarr-only_monitored": radarr_config.sync_only_monitored_movies,
-        "settings-radarr-movies_sync": 60,
-    }
-
-    save_settings(bazarr_base_url, bazarr_api_key, settings)
-    logger.info("Radarr configuration synced successfully")
+    items = (api.request(f"{endpoint}?start=0&length=-1") or {}).get("data", [])
+    unassigned = [item[id_field] for item in items if item.get("profileId") is None]
+    if not unassigned:
+        logger.info(f"No unassigned items at {endpoint}")
+        return
+    form: list[tuple[str, str]] = []
+    for item_id in unassigned:
+        form.append((form_id_field, str(item_id)))
+        form.append(("profileid", str(profile_id)))
+    api.request(endpoint, method="POST", form=form)
+    logger.info(
+        f"Gave profile {profile_id} to {len(unassigned)} unassigned items at {endpoint}"
+    )
 
 
 def main(config: SettingsSyncConfig) -> None:
-    # Read Bazarr API key
-    with open(config.bazarr_api_key_file, "r", encoding="utf-8") as f:
-        bazarr_api_key = f.read().strip()
+    api = BazarrApi(config.bazarr_base_url, read_key(config.bazarr_api_key_file))
 
-    if config.sonarr is not None:
-        sync_sonarr(config.bazarr_base_url, bazarr_api_key, config.sonarr)
+    form, ids_by_name = build_settings_form(config, api)
+    logger.info("Posting settings: %s", sorted({k for k, _ in form}))
+    api.request("/system/settings", method="POST", form=form)
+    logger.info("Bazarr settings synced")
 
-    if config.radarr is not None:
-        sync_radarr(config.bazarr_base_url, bazarr_api_key, config.radarr)
+    if config.assign_default_profile_to_unassigned:
+        if config.default_profile.series is not None and config.sonarr is not None:
+            assign_default_profile(
+                api,
+                "/series",
+                "sonarrSeriesId",
+                "seriesid",
+                ids_by_name[config.default_profile.series],
+            )
+        if config.default_profile.movies is not None and config.radarr is not None:
+            assign_default_profile(
+                api,
+                "/movies",
+                "radarrId",
+                "radarrid",
+                ids_by_name[config.default_profile.movies],
+            )
 
 
 if __name__ == "__main__":

@@ -368,7 +368,9 @@ def main(config: SettingsSyncConfig) -> None:
     logger.info("Bazarr settings synced")
 
     if config.assign_default_profile_to_unassigned:
-        if config.sonarr is None or config.radarr is None:
+        if (config.default_profile.series is not None and config.sonarr is None) or (
+            config.default_profile.movies is not None and config.radarr is None
+        ):
             logger.info(
                 "assignDefaultProfileToUnassigned covers only the Sonarr/Radarr "
                 "connections this module declares"

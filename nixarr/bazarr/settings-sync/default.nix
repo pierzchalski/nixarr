@@ -68,7 +68,7 @@
           Which subtitles satisfy this item, as in Bazarr's profile editor:
           - `normal`: normal or hearing-impaired (an existing HI/SDH subtitle counts)
           - `hi`: hearing-impaired required
-          - `nonHi`: hearing-impaired excluded
+          - `nonHi`: hearing-impaired excluded (Bazarr 1.6.1 or later)
           - `forced`: forced (foreign parts only)
         '';
       };
@@ -258,7 +258,8 @@ in {
           Bazarr language profiles, keyed by profile name. A declared profile
           keeps the id of an existing profile with the same name, so items
           already using it keep it. Profiles created in the UI under other
-          names are left alone. The sync fails if Bazarr has two profiles with
+          names are left alone, and so is a profile removed from this option:
+          delete it in the UI. The sync fails if Bazarr has two profiles with
           a declared profile's name. Declared profiles have no cutoff, and the
           sync resets one set in the UI.
         '';
@@ -368,6 +369,12 @@ in {
       {
         assertion = lib.all (l: lib.elem l cfg.languages) profileLanguages;
         message = "nixarr.bazarr.settings-sync.languageProfiles uses languages ${toString (lib.subtractLists cfg.languages profileLanguages)} that are not in nixarr.bazarr.settings-sync.languages";
+      }
+      {
+        assertion =
+          lib.any (p: lib.any (i: i.type == "nonHi") p.items) (lib.attrValues cfg.languageProfiles)
+          -> lib.versionAtLeast nixarr.bazarr.package.version "1.6.1";
+        message = "nixarr.bazarr.settings-sync.languageProfiles uses type = \"nonHi\", which needs Bazarr 1.6.1 or later; nixarr.bazarr.package is ${nixarr.bazarr.package.version}";
       }
       {
         assertion = lib.all (p: p.items != []) (lib.attrValues cfg.languageProfiles);

@@ -73,9 +73,13 @@ def sync_media_management(
     mm_api = sonarr.MediaManagementConfigApi(api_client)
     # Read the raw JSON: a settings key this client's model does not know
     # would be silently dropped by a model round trip and reset on PUT.
-    current = json.loads(
-        mm_api.get_media_management_config_without_preload_content().data
-    )
+    response = mm_api.get_media_management_config_without_preload_content()
+    if not 200 <= response.status <= 299:
+        raise RuntimeError(
+            f"GET /config/mediamanagement returned HTTP {response.status}: "
+            f"{response.data[:500]!r}"
+        )
+    current = json.loads(response.data)
     known = {
         field.alias or name
         for name, field in sonarr.MediaManagementConfigResource.model_fields.items()

@@ -36,6 +36,20 @@
 in {
   options = {
     nixarr.radarr.settings-sync = {
+      mediaManagement = mkOption {
+        type = with types; attrsOf (oneOf [bool int str]);
+        default = {};
+        example = {
+          importExtraFiles = true;
+          extraFileExtensions = "srt,ass,ssa,sub,idx,vtt,sup";
+        };
+        description = ''
+          Media management settings to set in Radarr, by their API name (the
+          keys of `GET /api/v3/config/mediamanagement`). Settings not listed
+          are left as they are.
+        '';
+      };
+
       downloadClients = mkOption {
         type = types.listOf (arrDownloadClientConfigType "radarr");
         default = [];
@@ -113,19 +127,26 @@ in {
 
     systemd.services.radarr-sync-config = {
       description = ''
-        Sync Radarr configuration (download clients)
+        Sync Radarr configuration (download clients, media management)
       '';
       after = wantedServices;
       wants = wantedServices;
       wantedBy = ["radarr.service"];
+      startLimitIntervalSec = 300;
+      startLimitBurst = 5;
       serviceConfig = {
         Type = "oneshot";
         User = globals.radarr.user;
         Group = globals.radarr.group;
         RemainAfterExit = true;
+        # The *arr API can briefly fail while the service is still starting
+        # (e.g. "database is locked" from SQLite).
+        Restart = "on-failure";
+        RestartSec = "10s";
         ExecStart = let
           config-file = writeJSON "radarr-sync-config.json" {
             download_clients = cfg.downloadClients;
+            media_management = cfg.mediaManagement;
           };
         in ''
           ${getExe sync-settings} --config-file ${config-file}

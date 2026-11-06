@@ -17,6 +17,8 @@ Added:
     add Transmission, or specify custom clients via `downloadClients`.
   - **Radarr:** Same as Sonarr — declaratively configure download clients via
     `nixarr.radarr.settings-sync`.
+  - **Sonarr/Radarr media management:** set fields such as `importExtraFiles`
+    and `extraFileExtensions` via `nixarr.{sonarr,radarr}.settings-sync.mediaManagement`.
   - **Bazarr:** Declaratively configure Sonarr/Radarr connections. Use
     `nixarr.bazarr.settings-sync.sonarr.enable = true` and
     `nixarr.bazarr.settings-sync.radarr.enable = true` with optional filtering

@@ -36,8 +36,17 @@ pkgs.testers.runNixOSTest {
       bazarr = {
         enable = true;
         settings-sync = {
-          sonarr.enable = true;
-          radarr.enable = true;
+          sonarr = {
+            enable = true;
+            config = {
+              sync_only_monitored_series = true;
+              sync_only_monitored_episodes = true;
+            };
+          };
+          radarr = {
+            enable = true;
+            config.sync_only_monitored_movies = true;
+          };
           languages = ["en"];
           languageProfiles.English.items = [{language = "en";}];
           defaultProfile = {
@@ -130,6 +139,12 @@ pkgs.testers.runNixOSTest {
         assert settings["opensubtitlescom"]["use_hash"] is True
         assert general["wanted_search_frequency"] == 12, general["wanted_search_frequency"]
         assert general["wanted_search_frequency_movie"] == 24, general["wanted_search_frequency_movie"]
+        assert settings["sonarr"]["sync_only_monitored_series"] is True
+        assert settings["sonarr"]["sync_only_monitored_episodes"] is True
+        assert settings["radarr"]["sync_only_monitored_movies"] is True
+        # A different setting (which items count as wanted), left at Bazarr's default.
+        assert settings["sonarr"]["only_monitored"] is False
+        assert settings["radarr"]["only_monitored"] is False
 
     with subtest("Languages and profiles"):
         enabled = [l["code2"] for l in bazarr("/system/languages") if l["enabled"]]
@@ -148,10 +163,26 @@ pkgs.testers.runNixOSTest {
         assert general["serie_default_profile"] == english["profileId"], general["serie_default_profile"]
         assert general["movie_default_profile"] == english["profileId"], general["movie_default_profile"]
 
-    with subtest("Re-running the sync keeps the profile id"):
+    with subtest("Re-running the sync keeps the profile id and profiles made in the UI"):
+        other = {
+            "profileId": english["profileId"] + 1, "name": "Made in UI", "cutoff": None,
+            "items": [{"id": 1, "language": "en", "hi": "True", "forced": "False",
+                       "audio_exclude": "False", "audio_only_include": "False"}],
+            "mustContain": ["foo"], "mustNotContain": [], "originalFormat": 1, "tag": None,
+        }
+        machine.succeed(
+            f"curl -sf -X POST -H 'X-API-KEY: {bazarr_key}' 'http://127.0.0.1:6767/api/system/settings'"
+            f" --data-urlencode 'languages-profiles={json.dumps([english, other])}'"
+        )
+        assert len(bazarr("/system/languages/profiles")) == 2
         machine.succeed("systemctl restart bazarr-sync-config.service")
-        profiles = bazarr("/system/languages/profiles")
-        assert [(p["profileId"], p["name"]) for p in profiles] == [(english["profileId"], "English")], profiles
+        profiles = {p["name"]: p for p in bazarr("/system/languages/profiles")}
+        assert sorted(profiles) == ["English", "Made in UI"], profiles
+        assert profiles["English"] == english, profiles["English"]
+        assert profiles["Made in UI"] == other, profiles["Made in UI"]
+        machine.succeed(
+            "journalctl -u bazarr-sync-config.service --since '-2min' | grep -q 'Language profiles unchanged'"
+        )
 
     with subtest("Sonarr and Radarr import extra files"):
         for base, key in (("8989/sonarr", sonarr_key), ("7878/radarr", radarr_key)):

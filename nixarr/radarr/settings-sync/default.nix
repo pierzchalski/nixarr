@@ -46,7 +46,8 @@ in {
         description = ''
           Media management settings to set in Radarr, by their API name (the
           keys of `GET /api/v3/config/mediamanagement`). Settings not listed
-          are left as they are.
+          are left as they are. The sync fails if Radarr returns a setting
+          the bundled API client does not know, rather than risk resetting it.
         '';
       };
 

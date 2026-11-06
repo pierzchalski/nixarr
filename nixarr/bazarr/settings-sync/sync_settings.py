@@ -123,7 +123,7 @@ class BazarrApi:
             headers["Content-Type"] = "application/x-www-form-urlencoded"
         req = urllib.request.Request(url, data=data, headers=headers, method=method)
         try:
-            with urllib.request.urlopen(req, timeout=60) as response:
+            with urllib.request.urlopen(req, timeout=600) as response:
                 body = response.read().decode("utf-8")
                 return json.loads(body) if body else None
         except urllib.error.HTTPError as e:
@@ -157,6 +157,18 @@ def read_key(path: str) -> str:
         return f.read().strip()
 
 
+PROFILE_FIELDS = (
+    "profileId",
+    "name",
+    "cutoff",
+    "items",
+    "mustContain",
+    "mustNotContain",
+    "originalFormat",
+    "tag",
+)
+
+
 def build_profiles(
     declared: list[LanguageProfile], existing: list[dict[str, Any]]
 ) -> tuple[list[dict[str, Any]], dict[str, int]]:
@@ -168,6 +180,19 @@ def build_profiles(
     existing profile with the same name.
     """
     declared_names = {p.name for p in declared}
+    existing_names = [p["name"] for p in existing]
+    duplicated = sorted(
+        {
+            n
+            for n in existing_names
+            if n in declared_names and existing_names.count(n) > 1
+        }
+    )
+    if duplicated:
+        raise ValueError(
+            f"Bazarr has more than one profile named {duplicated}; rename all but "
+            "one in Bazarr so the declared profile has a single match."
+        )
     ids_by_name = {p["name"]: p["profileId"] for p in existing}
     next_id = max([p["profileId"] for p in existing], default=0) + 1
 
@@ -193,19 +218,48 @@ def build_profiles(
     return merged, ids_by_name
 
 
+def profiles_differ(
+    profiles: list[dict[str, Any]], existing: list[dict[str, Any]]
+) -> bool:
+    def normalize(profile: dict[str, Any]) -> dict[str, Any]:
+        normalized = {k: profile.get(k) for k in PROFILE_FIELDS}
+        # Bazarr stores originalFormat as an integer.
+        if normalized["originalFormat"] is not None:
+            normalized["originalFormat"] = int(normalized["originalFormat"])
+        return normalized
+
+    def key(profile_list: list[dict[str, Any]]) -> list[str]:
+        return sorted(json.dumps(normalize(p), sort_keys=True) for p in profile_list)
+
+    return key(profiles) != key(existing)
+
+
 def build_settings_form(
     config: SettingsSyncConfig, api: BazarrApi
 ) -> tuple[list[tuple[str, str]], dict[str, int]]:
     form: list[tuple[str, str]] = []
     ids_by_name: dict[str, int] = {}
 
+    if config.languages:
+        known = {lang["code2"] for lang in api.request("/system/languages") or []}
+        unknown = sorted(set(config.languages) - known)
+        if unknown:
+            raise ValueError(
+                f"Bazarr does not know these language codes: {unknown}. "
+                "Use the code2 values from GET /api/system/languages."
+            )
     for code in config.languages:
         form.append(("languages-enabled", code))
 
     if config.language_profiles:
         existing = api.request("/system/languages/profiles") or []
         profiles, ids_by_name = build_profiles(config.language_profiles, existing)
-        form.append(("languages-profiles", json.dumps(profiles)))
+        # Posting profiles makes Bazarr recompute missing subtitles for the
+        # whole library before it answers, so skip it when nothing changed.
+        if profiles_differ(profiles, existing):
+            form.append(("languages-profiles", json.dumps(profiles)))
+        else:
+            logger.info("Language profiles unchanged")
 
     for kind, prefix in (("series", "serie"), ("movies", "movie")):
         name = getattr(config.default_profile, kind)
@@ -251,7 +305,18 @@ def build_settings_form(
             "apikey",
             read_key(sonarr.apiKeyFile) if sonarr.apiKeyFile else "",
         )
-        add_setting(form, "sonarr", "only_monitored", sonarr.sync_only_monitored_series)
+        add_setting(
+            form,
+            "sonarr",
+            "sync_only_monitored_series",
+            sonarr.sync_only_monitored_series,
+        )
+        add_setting(
+            form,
+            "sonarr",
+            "sync_only_monitored_episodes",
+            sonarr.sync_only_monitored_episodes,
+        )
 
     if config.radarr is not None:
         radarr = config.radarr
@@ -266,7 +331,12 @@ def build_settings_form(
             "apikey",
             read_key(radarr.apiKeyFile) if radarr.apiKeyFile else "",
         )
-        add_setting(form, "radarr", "only_monitored", radarr.sync_only_monitored_movies)
+        add_setting(
+            form,
+            "radarr",
+            "sync_only_monitored_movies",
+            radarr.sync_only_monitored_movies,
+        )
 
     return form, ids_by_name
 
@@ -298,6 +368,11 @@ def main(config: SettingsSyncConfig) -> None:
     logger.info("Bazarr settings synced")
 
     if config.assign_default_profile_to_unassigned:
+        if config.sonarr is None or config.radarr is None:
+            logger.info(
+                "assignDefaultProfileToUnassigned covers only the Sonarr/Radarr "
+                "connections this module declares"
+            )
         if config.default_profile.series is not None and config.sonarr is not None:
             assign_default_profile(
                 api,

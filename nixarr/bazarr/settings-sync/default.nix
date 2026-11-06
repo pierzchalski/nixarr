@@ -112,7 +112,7 @@
     };
   };
 
-  wantedSearchFrequencyType = types.nullOr (types.enum [6 12 24 168]);
+  wantedSearchFrequencyType = types.nullOr (types.enum [6 12 24 168 876000]);
 
   sonarrConfigModule = {
     options = {
@@ -258,7 +258,9 @@ in {
           Bazarr language profiles, keyed by profile name. A declared profile
           keeps the id of an existing profile with the same name, so items
           already using it keep it. Profiles created in the UI under other
-          names are left alone.
+          names are left alone. The sync fails if Bazarr has two profiles with
+          a declared profile's name. Declared profiles have no cutoff, and the
+          sync resets one set in the UI.
         '';
       };
 
@@ -334,6 +336,7 @@ in {
           example = 6;
           description = ''
             Hours between Bazarr's searches for missing episode subtitles.
+            876000 (100 years) turns the search off, as Bazarr's UI does.
             `null` leaves Bazarr's setting alone (its default is 6).
           '';
         };
@@ -343,6 +346,7 @@ in {
           example = 6;
           description = ''
             Hours between Bazarr's searches for missing movie subtitles.
+            876000 (100 years) turns the search off, as Bazarr's UI does.
             `null` leaves Bazarr's setting alone (its default is 6).
           '';
         };

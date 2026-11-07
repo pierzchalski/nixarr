@@ -36,6 +36,21 @@
 in {
   options = {
     nixarr.sonarr.settings-sync = {
+      mediaManagement = mkOption {
+        type = with types; attrsOf (oneOf [bool int str]);
+        default = {};
+        example = {
+          importExtraFiles = true;
+          extraFileExtensions = "srt,ass,ssa,sub,idx,vtt,sup";
+        };
+        description = ''
+          Media management settings to set in Sonarr, by their API name (the
+          keys of `GET /api/v3/config/mediamanagement`). Settings not listed
+          are left as they are. The sync fails if Sonarr returns a setting
+          the bundled API client does not know, rather than risk resetting it.
+        '';
+      };
+
       downloadClients = mkOption {
         type = types.listOf (arrDownloadClientConfigType "sonarr");
         default = [];
@@ -112,19 +127,26 @@ in {
 
     systemd.services.sonarr-sync-config = {
       description = ''
-        Sync Sonarr configuration (download clients)
+        Sync Sonarr configuration (download clients, media management)
       '';
       after = wantedServices;
       wants = wantedServices;
       wantedBy = ["sonarr.service"];
+      startLimitIntervalSec = 300;
+      startLimitBurst = 5;
       serviceConfig = {
         Type = "oneshot";
         User = globals.sonarr.user;
         Group = globals.sonarr.group;
         RemainAfterExit = true;
+        # The *arr API can briefly fail while the service is still starting
+        # (e.g. "database is locked" from SQLite).
+        Restart = "on-failure";
+        RestartSec = "10s";
         ExecStart = let
           config-file = writeJSON "sonarr-sync-config.json" {
             download_clients = cfg.downloadClients;
+            media_management = cfg.mediaManagement;
           };
         in ''
           ${getExe sync-settings} --config-file ${config-file}

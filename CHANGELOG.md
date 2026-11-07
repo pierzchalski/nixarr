@@ -17,10 +17,16 @@ Added:
     add Transmission, or specify custom clients via `downloadClients`.
   - **Radarr:** Same as Sonarr — declaratively configure download clients via
     `nixarr.radarr.settings-sync`.
+  - **Sonarr/Radarr media management:** set fields such as `importExtraFiles`
+    and `extraFileExtensions` via `nixarr.{sonarr,radarr}.settings-sync.mediaManagement`.
   - **Bazarr:** Declaratively configure Sonarr/Radarr connections. Use
     `nixarr.bazarr.settings-sync.sonarr.enable = true` and
     `nixarr.bazarr.settings-sync.radarr.enable = true` with optional filtering
-    for monitored content only.
+    for monitored content only. The Sonarr/Radarr URL base defaults to the
+    service's `urlBase`. Also declare enabled languages, language profiles,
+    the default profile for new series and movies, subtitle providers and
+    their settings (secrets read from files), and how often Bazarr searches
+    for missing subtitles.
 - **1984 DDNS** options.
 - **qBittorrent service** with VPN confinement support, [qui](https://github.com/autobrr/qui)
   WebUI (enabled by default), private tracker mode, Prometheus exporter, and

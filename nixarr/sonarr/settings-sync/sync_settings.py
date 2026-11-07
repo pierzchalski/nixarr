@@ -1,5 +1,6 @@
 from typing import Any
 import argparse
+import json
 import sonarr
 import pydantic
 import pathlib
@@ -26,6 +27,7 @@ class DownloadClient(pydantic.BaseModel):
 
 class SettingsSyncConfig(pydantic.BaseModel):
     download_clients: list[DownloadClient] = []
+    media_management: dict[str, Any] = {}
 
     model_config = pydantic.ConfigDict(extra="forbid")
 
@@ -62,8 +64,47 @@ def sync_download_clients(
             dc_api.update_download_client(id=dc.id, download_client_resource=dc)
 
 
+def sync_media_management(
+    user_settings: dict[str, Any], api_client: sonarr.ApiClient
+) -> None:
+    if not user_settings:
+        return
+    logger.info(f"Syncing media management settings {sorted(user_settings)}")
+    mm_api = sonarr.MediaManagementConfigApi(api_client)
+    # Read the raw JSON: a settings key this client's model does not know
+    # would be silently dropped by a model round trip and reset on PUT.
+    response = mm_api.get_media_management_config_without_preload_content()
+    if not 200 <= response.status <= 299:
+        raise RuntimeError(
+            f"GET /config/mediamanagement returned HTTP {response.status}: "
+            f"{response.data[:500]!r}"
+        )
+    current = json.loads(response.data)
+    known = {
+        field.alias or name
+        for name, field in sonarr.MediaManagementConfigResource.model_fields.items()
+    }
+    unknown_current = set(current) - known
+    if unknown_current:
+        raise RuntimeError(
+            f"Sonarr returned media management settings this client does not know, refusing to overwrite them: {sorted(unknown_current)}"
+        )
+    unknown_user = set(user_settings) - known
+    if unknown_user:
+        raise RuntimeError(
+            f"Unknown Sonarr media management settings: {sorted(unknown_user)}"
+        )
+    merged = sonarr.MediaManagementConfigResource.from_dict(
+        {**current, **user_settings}
+    )
+    mm_api.update_media_management_config(
+        id=str(current["id"]), media_management_config_resource=merged
+    )
+
+
 def main(config: SettingsSyncConfig, api_client: sonarr.ApiClient) -> None:
     sync_download_clients(config.download_clients, api_client)
+    sync_media_management(config.media_management, api_client)
 
 
 if __name__ == "__main__":

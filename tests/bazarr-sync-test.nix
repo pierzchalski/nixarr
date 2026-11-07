@@ -54,6 +54,7 @@ pkgs.testers.runNixOSTest {
             movies = "English";
           };
           assignDefaultProfileToUnassigned = true;
+          rescanAfterDownload = true;
           providers = {
             enabled = ["opensubtitlescom" "gestdown" "yifysubtitles"];
             settings.opensubtitlescom = {
@@ -91,6 +92,8 @@ pkgs.testers.runNixOSTest {
     secretsDir = "${nodes.machine.nixarr.stateDir}/secrets";
   in ''
     import json
+    import re
+    import shlex
 
     machine.wait_for_unit("multi-user.target")
 
@@ -145,6 +148,10 @@ pkgs.testers.runNixOSTest {
         # A different setting (which items count as wanted), left at Bazarr's default.
         assert settings["sonarr"]["only_monitored"] is False
         assert settings["radarr"]["only_monitored"] is False
+        assert general["use_postprocessing"] is True
+        assert "nixarr-bazarr-rescan-arr" in general["postprocessing_cmd"], general["postprocessing_cmd"]
+        assert general["use_postprocessing_threshold"] is False
+        assert general["use_postprocessing_threshold_movie"] is False
 
     with subtest("Languages and profiles"):
         enabled = [l["code2"] for l in bazarr("/system/languages") if l["enabled"]]
@@ -227,6 +234,70 @@ pkgs.testers.runNixOSTest {
         assert bazarr("/series")["data"][0]["profileId"] is None
         machine.succeed("systemctl restart bazarr-sync-config.service")
         assert bazarr("/series")["data"][0]["profileId"] == english["profileId"]
+
+    def run_like_bazarr(series_id, episode_id):
+        # As Bazarr 1.6.1 does (utilities/post_processing.py, subtitles/post_processing.py):
+        # substitute each placeholder with the value in double quotes, split
+        # with shlex, run without a shell, with the Bazarr process's credentials.
+        template = bazarr("/system/settings")["general"]["postprocessing_cmd"]
+        command = re.sub(r"""['"]?{{series_id}}['"]?""", lambda m: f'"{series_id}"', template)
+        command = re.sub(r"""['"]?{{episode_id}}['"]?""", lambda m: f'"{episode_id}"', command)
+        pid = machine.succeed("systemctl show -p MainPID --value bazarr.service").strip()
+        status = machine.succeed(f"cat /proc/{pid}/status")
+        fields = dict(line.split(":", 1) for line in status.splitlines() if ":" in line)
+        uid = fields["Uid"].split()[0]
+        gid = fields["Gid"].split()[0]
+        groups = fields["Groups"].split()
+        return machine.succeed(
+            f"setpriv --reuid={uid} --regid={gid} --groups={','.join(groups)} -- "
+            + shlex.join(shlex.split(command))
+        )
+
+    with subtest("Bazarr runs with the Sonarr and Radarr key groups"):
+        pid = machine.succeed("systemctl show -p MainPID --value bazarr.service").strip()
+        groups = machine.succeed(f"grep ^Groups: /proc/{pid}/status").split()[1:]
+        for group in ("sonarr-api", "radarr-api"):
+            group_id = machine.succeed(f"getent group {group} | cut -d: -f3").strip()
+            assert group_id in groups, (group, group_id, groups)
+
+    with subtest("The post-processing command makes Sonarr adopt a new subtitle"):
+        season = "/srv/shows/Test Show/Season 01"
+        machine.succeed(f"mkdir -p '{season}' && head -c 1024 /dev/zero > '{season}/Test Show - S01E01.mkv'")
+        # An episode with a file Sonarr already tracks; as above, written directly.
+        machine.succeed("systemctl stop sonarr.service")
+        machine.succeed(
+            "sqlite3 ${nodes.machine.nixarr.sonarr.stateDir}/sonarr.db <<'EOF'\n"
+            "INSERT INTO EpisodeFiles (SeriesId, Quality, Size, DateAdded, SeasonNumber, RelativePath, Languages)"
+            f" VALUES ({sonarr_series_id}, '{{\"quality\": 1, \"revision\": {{\"version\": 1, \"real\": 0, \"isRepack\": false}}}}',"
+            " 1024, '2026-01-01 00:00:00Z', 1, 'Season 01/Test Show - S01E01.mkv', '[1]');\n"
+            "INSERT INTO Episodes (SeriesId, SeasonNumber, EpisodeNumber, Title, EpisodeFileId, Monitored,"
+            " UnverifiedSceneNumbering, Runtime, AirDate, AirDateUtc)"
+            f" VALUES ({sonarr_series_id}, 1, 1, 'Pilot', last_insert_rowid(), 1, 0, 0, '2020-01-01', '2020-01-01 00:00:00Z');\n"
+            "EOF"
+        )
+        machine.succeed("systemctl start sonarr.service")
+        machine.wait_until_succeeds(
+            f"curl -sf -H 'X-Api-Key: {sonarr_key}' 'http://127.0.0.1:{sonarr_base}/api/v3/episodefile?seriesId={sonarr_series_id}' | jq -e 'length == 1'",
+            timeout=180,
+        )
+        subtitle_rows = "sqlite3 ${nodes.machine.nixarr.sonarr.stateDir}/sonarr.db 'SELECT RelativePath, Language FROM SubtitleFiles'"
+        assert machine.succeed(subtitle_rows).strip() == "", "Sonarr tracks a subtitle before the test wrote one"
+
+        # What Bazarr would have just written.
+        machine.succeed(f"printf '1\\n00:00:01,000 --> 00:00:02,000\\nHello\\n' > '{season}/Test Show - S01E01.en.srt'")
+        out = run_like_bazarr(sonarr_series_id, 1)
+        assert f"Sonarr RescanSeries {sonarr_series_id}: command" in out, out
+        machine.wait_until_succeeds(f"{subtitle_rows} | grep -qx 'Season 01/Test Show - S01E01.en.srt|1'", timeout=60)
+
+    with subtest("The post-processing command asks Radarr for a movie, and skips missing ids"):
+        # Bazarr passes an empty series id and the Radarr id as episode id for a movie.
+        out = run_like_bazarr("", 7)
+        assert "Radarr RescanMovie 7: command" in out, out
+        commands = arr("7878/radarr", radarr_key, "/command")
+        assert any(c["name"] == "RescanMovie" and c["body"].get("movieId") == 7 for c in commands), commands
+        # For a movie subtitle uploaded in the UI, the series id is "None".
+        out = run_like_bazarr("None", "")
+        assert "nothing to rescan" in out, out
 
     print("\n=== Bazarr Sync Test Completed ===")
   '';

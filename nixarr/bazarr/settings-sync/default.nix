@@ -33,6 +33,30 @@
     ];
   } (builtins.readFile ./sync_settings.py);
 
+  # The name is matched by sync_settings.py (RESCAN_HOOK_MARKER).
+  rescan-arr = writePython3Bin "nixarr-bazarr-rescan-arr" {
+    flakeIgnore = [
+      "E501" # Line too long
+    ];
+  } (builtins.readFile ./rescan_arr.py);
+
+  rescanArrConnection = arr:
+    if cfg.${arr}.enable
+    then {
+      inherit (cfg.${arr}.config) ip port base_url ssl;
+      api_key_file = cfg.${arr}.config.apiKeyFile;
+    }
+    else null;
+
+  rescanCommand = let
+    hook-config = writeJSON "bazarr-rescan-arr.json" {
+      sonarr = rescanArrConnection "sonarr";
+      radarr = rescanArrConnection "radarr";
+    };
+  in
+    # Bazarr substitutes the placeholders, quoting each value.
+    "${getExe rescan-arr} --config-file ${hook-config} --series-id {{series_id}} --episode-id {{episode_id}}";
+
   wantedServices =
     ["bazarr-api.service"]
     ++ (lib.optional cfg.sonarr.enable "sonarr-api.service")
@@ -47,7 +71,8 @@
     || cfg.providers.enabled != null
     || cfg.providers.settings != {}
     || cfg.wantedSearchFrequency.series != null
-    || cfg.wantedSearchFrequency.movies != null;
+    || cfg.wantedSearchFrequency.movies != null
+    || cfg.rescanAfterDownload;
 
   syncEnabled = cfg.sonarr.enable || cfg.radarr.enable || subtitlesDeclared;
 
@@ -299,6 +324,28 @@ in {
         '';
       };
 
+      rescanAfterDownload = mkOption {
+        type = types.bool;
+        default = false;
+        description = ''
+          After each subtitle Bazarr downloads, ask Sonarr or Radarr to rescan
+          that series or movie, so the new subtitle file becomes one of its
+          tracked extra files. Sonarr and Radarr delete tracked extra files
+          when they replace a video file, so a subtitle written since their
+          last scan stays behind after an upgrade. Their periodic refresh
+          rescans too; this narrows that window to the download itself.
+
+          This uses Bazarr's post-processing command, which it then owns: the
+          sync sets the command and turns the score thresholds off. After
+          setting this back to false, the next sync clears the command if it
+          is still the one set here. It uses the declared Sonarr/Radarr
+          connections and their API key files. The Bazarr user is already in
+          the `sonarr-api`/`radarr-api` groups; naming them on the Bazarr
+          service as well means turning this on restarts Bazarr, so the
+          running process can read the key files.
+        '';
+      };
+
       providers = {
         enabled = mkOption {
           type = types.nullOr (types.listOf types.str);
@@ -385,6 +432,10 @@ in {
         message = "nixarr.bazarr.settings-sync.assignDefaultProfileToUnassigned needs defaultProfile.series or defaultProfile.movies";
       }
       {
+        assertion = cfg.rescanAfterDownload -> (cfg.sonarr.enable || cfg.radarr.enable);
+        message = "nixarr.bazarr.settings-sync.rescanAfterDownload needs nixarr.bazarr.settings-sync.sonarr.enable or .radarr.enable";
+      }
+      {
         assertion = cfg.sonarr.enable -> nixarr.sonarr.enable;
         message = "nixarr.bazarr.settings-sync.sonarr.enable requires nixarr.sonarr.enable to be true";
       }
@@ -398,6 +449,15 @@ in {
       ["bazarr-api"]
       ++ (lib.optional cfg.sonarr.enable "sonarr-api")
       ++ (lib.optional cfg.radarr.enable "radarr-api");
+
+    # The rescan hook runs inside Bazarr and reads the Sonarr/Radarr API keys.
+    # The user has these groups already (above), but a process keeps the groups
+    # it started with; naming them here changes the unit, so enabling the hook
+    # restarts Bazarr.
+    systemd.services.bazarr.serviceConfig.SupplementaryGroups = mkIf cfg.rescanAfterDownload (
+      (lib.optional cfg.sonarr.enable "sonarr-api")
+      ++ (lib.optional cfg.radarr.enable "radarr-api")
+    );
 
     systemd.services.bazarr-sync-config = {
       description = ''
@@ -422,6 +482,10 @@ in {
               enabled_providers = cfg.providers.enabled;
               provider_settings = cfg.providers.settings;
               wanted_search_frequency = cfg.wantedSearchFrequency;
+              rescan_after_download_command =
+                if cfg.rescanAfterDownload
+                then rescanCommand
+                else null;
             }
             // lib.optionalAttrs cfg.sonarr.enable {sonarr = cfg.sonarr.config;}
             // lib.optionalAttrs cfg.radarr.enable {radarr = cfg.radarr.config;});

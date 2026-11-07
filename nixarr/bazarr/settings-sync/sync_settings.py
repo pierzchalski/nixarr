@@ -99,8 +99,14 @@ class SettingsSyncConfig(pydantic.BaseModel):
     enabled_providers: list[str] | None = None
     provider_settings: dict[str, dict[str, Any]] = {}
     wanted_search_frequency: WantedSearchFrequency = WantedSearchFrequency()
+    rescan_after_download_command: str | None = None
 
     model_config = pydantic.ConfigDict(extra="forbid")
+
+
+# Found in the rescan hook's store path; marks a post-processing command this
+# module set, so turning the option off can clear it.
+RESCAN_HOOK_MARKER = "nixarr-bazarr-rescan-arr"
 
 
 class BazarrApi:
@@ -288,6 +294,22 @@ def build_settings_form(
             "wanted_search_frequency_movie",
             config.wanted_search_frequency.movies,
         )
+
+    if config.rescan_after_download_command is not None:
+        add_setting(form, "general", "use_postprocessing", True)
+        add_setting(
+            form, "general", "postprocessing_cmd", config.rescan_after_download_command
+        )
+        # With a threshold on, Bazarr runs the command only for scores below
+        # it; a rescan is wanted after every download.
+        add_setting(form, "general", "use_postprocessing_threshold", False)
+        add_setting(form, "general", "use_postprocessing_threshold_movie", False)
+    else:
+        general = (api.request("/system/settings") or {}).get("general", {})
+        if RESCAN_HOOK_MARKER in str(general.get("postprocessing_cmd") or ""):
+            logger.info("Removing the rescan post-processing command this module set")
+            add_setting(form, "general", "use_postprocessing", False)
+            add_setting(form, "general", "postprocessing_cmd", "")
 
     # All of this goes in one request: Bazarr stores the profiles and default
     # profile before it reconnects to Sonarr/Radarr, and that reconnect starts
